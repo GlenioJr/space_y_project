@@ -1,0 +1,1102 @@
+<?xml version="1.0" encoding="utf-16"?>
+<ArrayOfConsultaExportavel xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema">
+  <ConsultaExportavel>
+    <Consulta>
+      <PermitirGeracaoAutomatica>
+        <Index>1</Index>
+        <Description>Não</Description>
+      </PermitirGeracaoAutomatica>
+      <FormatoArquivo>
+        <Index>2</Index>
+        <Description>Separado por delimitador</Description>
+      </FormatoArquivo>
+      <Consulta>SELECT 
+A.HANDLE                                PASTA_HANDLE,
+A.IDENTIFICADOR                         PASTA,
+C.NOME                                  CATEGORIA,
+PR.HANDLE                               PR_HANDLE,
+PR.NUMERODISTRIBUICAO                   PROCESSO,
+ACAO.NOME                               TIPO_AÇÃO,
+GER.DESCRICAOESTRUTURA                  GERENCIA_RESPONSAVEL,
+ADVIPES.NOME                            ADVOGADO_INTERNO,
+PROVID.NOME                             PROVIDENCIA,
+TRUNC(PROV.INCLUIDOEM)                  DATA_INCLUSAO,
+TO_CHAR(PROV.INCLUIDOEM, 'DD/MM/YYYY HH24:MI') DATA_HR_INCLUSAO,
+DECODE(PROV.CUMPRIDO, 1, 'Cumprido', 2, 'A Cumprir') STATUS_PROVIDENCIA,   
+GRPCUMP.NOME CUMPRIDO_USUARIO,
+PESCUMP.NOME CUMPRIDO_POR,
+TO_CHAR(LOG_CONCLUSAO.DT_CUMPRIMENTO_LOG, 'DD/MM/YYYY HH24:MI') DATA_CONCLUSAO,
+TRUNC(PROV.CUMPRIDOEM)                         DATA_INFORMADA_CUMPRIMENTO,
+COALESCE(PROV.DATAFINAL, PROV.DATACERTA) DATAEVENTO,
+DECODE(PROV.TIPORESPONSAVEL, 1, 'Pessoa', 2, 'Papel', 3, 'Advogado Interno', 4, 'Escritório contratado', 5, 'Outros') TIPO_RESPONSAVEL,
+CASE PROV.TIPORESPONSAVEL
+     WHEN 1 THEN RESP.APELIDO
+     WHEN 2 THEN ''
+     WHEN 3 THEN ADVINT.APELIDO
+     WHEN 4 THEN ADVEXT.APELIDO          
+     WHEN 5 THEN ''                      
+END                                      RESPONSAVEL_USUARIO,
+CASE PROV.TIPORESPONSAVEL
+     WHEN 1 THEN RESP.NOME
+     WHEN 2 THEN ''
+     WHEN 3 THEN ADVINT.NOME
+     WHEN 4 THEN ADVEXT.NOME           
+     WHEN 5 THEN ''                      
+END                                      RESPONSAVEL_PESSOA,      
+PAPEL.NOME                               RESPONSAVEL_PAPEL,
+ESCRPES.NOME                             ESCRITÓRIO,
+CONT.K9_CONTRATOSAP                      NÚMERO_CONTRATO,      
+(
+    SELECT LISTAGG(CONCAT(CONCAT(TPDOC.NOME, '='), DOC.NOME), '; ') WITHIN GROUP (ORDER BY DOC.NOME) LISTA_DOCUMENTOS
+    FROM K9_PR_PROVIDENCIAANEXOS ANEXO 
+    LEFT JOIN PR_PROCESSODOCUMENTOS DOC ON DOC.HANDLE = ANEXO.DOCUMENTO
+    LEFT JOIN GE_TIPODOCUMENTO TPDOC ON TPDOC.HANDLE = DOC.TIPODOCUMENTO
+    WHERE ANEXO.PROVIDENCIA = PROV.HANDLE
+    AND ROWNUM &lt;= 10
+    GROUP BY PROV.HANDLE
+)                                        LISTA_DOCUMENTOS
+
+FROM PR_PROCESSOS A
+JOIN PR_CATEGORIAS C              ON A.CATEGORIA = C.HANDLE
+-- ///==================== PROCESSO
+JOIN PR_PROCESSODESDOBRAMENTOS PR          ON PR.PROCESSO = A.HANDLE
+JOIN PR_DESDOBRAMENTOS ACAO                ON ACAO.HANDLE = PR.DESDOBRAMENTO
+LEFT JOIN K9_GN_ESTRUTURA_JURIDICO GER     ON GER.HANDLE         = PR.K9_GERENCIARESPONSAVEL
+LEFT JOIN PR_PROCESSOPARTICIPANTES ADVI    ON ADVI.DESDOBRAMENTO = PR.HANDLE AND ADVI.CLASSE = 4 AND ADVI.TIPOADVOGADO = 1 AND ADVI.PARTICIPANTEPRINCIPAL = 'S'
+LEFT JOIN GN_PESSOAS ADVIPES               ON ADVIPES.HANDLE     = ADVI.PARTICIPANTE
+-- ///==================== ESCRITORIO PROCESSO
+INNER JOIN PR_PROCESSOPARTICIPANTES ESCR  ON ESCR.DESDOBRAMENTO  = PR.HANDLE   AND ESCR.CLASSE = 4 AND ESCR.TIPOADVOGADO = 3  AND ESCR.PARTICIPANTEPRINCIPAL = 'S'
+INNER JOIN FN_CONTRATOS CONT              ON ESCR.K9_NUMCONTRATO = CONT.HANDLE  
+LEFT JOIN  GN_PESSOAS ESCRPES             ON ESCRPES.HANDLE      = ESCR.PARTICIPANTE
+-- ///==================== PROVIDENCIAS
+JOIN PR_PROCESSOEVENTOS ANDA              ON ANDA.DESDOBRAMENTO = PR.HANDLE
+JOIN PR_EVENTOS EVE                       ON ANDA.EVENTO = EVE.HANDLE     
+JOIN PR_PROCESSOEVENTOPROVIDENCIAS PROV   ON PROV.EVENTO = ANDA.HANDLE
+JOIN PR_PROVIDENCIAEVENTOS PROVID         ON PROVID.HANDLE = PROV.HANDLEPROVIDENCIA
+JOIN Z_GRUPOUSUARIOS GRPCUMP              ON GRPCUMP.HANDLE = PROV.CUMPRIDOPOR
+JOIN GN_PESSOAS PESCUMP                   ON PESCUMP.HANDLE = GRPCUMP.K9_PESSOA
+-- ///==================== RESPONSAVEIS PROVIDENCIA
+LEFT JOIN GN_PESSOAS ADVEXT               ON ADVEXT.HANDLE = PROV.RESPONSAVELADVEXT
+LEFT JOIN GN_PESSOAS ADVINT               ON ADVINT.HANDLE = PROV.RESPONSAVELADVINT
+LEFT JOIN Z_WFPAPEIS PAPEL                ON PAPEL.HANDLE = PROV.RESPONSAVELPAPEL
+LEFT JOIN GN_PESSOAS RESP                 ON RESP.HANDLE = PROV.RESPONSAVEL
+-- ///==================== LOG CONCLUSAO
+LEFT JOIN ( 
+    SELECT NVL(SUBSTR(EXTRACTVALUE(xmltype(NVL(LOG.DADOS,'&lt;CAMPOS&gt;&lt;CUMPRIDO&gt;&lt;/CUMPRIDO&gt;&lt;/CAMPOS&gt;')), '/CAMPOS/CUMPRIDO'),2), '-1') AS FLAG_CUMPRIDO,
+    LOG.REGISTRO,
+    MAX(LOG.DATAHORA) AS DT_CUMPRIMENTO_LOG
+    FROM Z_LOG LOG
+    JOIN Z_TABELAS TAB ON TAB.HANDLE = LOG.TABELA AND TAB.NOME = 'PR_PROCESSOEVENTOPROVIDENCIAS'
+    WHERE LOG.DADOS IS NOT NULL
+    AND LOG.DADOS LIKE '%CUMPRIDO%'
+    GROUP BY NVL(SUBSTR(EXTRACTVALUE(xmltype(NVL(LOG.DADOS,'&lt;CAMPOS&gt;&lt;CUMPRIDO&gt;&lt;/CUMPRIDO&gt;&lt;/CAMPOS&gt;')), '/CAMPOS/CUMPRIDO'),2), '-1'), REGISTRO
+) LOG_CONCLUSAO ON LOG_CONCLUSAO.REGISTRO = PROV.HANDLE AND LOG_CONCLUSAO.FLAG_CUMPRIDO = '2'
+WHERE ANDA.DATAEVENTO &gt;= TO_DATE('01/01/2020', 'DD/MM/YYYY')
+</Consulta>
+      <Delimitador>;</Delimitador>
+      <Nome>PETRO - GEJ - Relatório 3 - Providências</Nome>
+      <TabelaPrincipal>PR_PROCESSOS</TabelaPrincipal>
+      <UtilizarDBLink>1</UtilizarDBLink>
+      <CodigoInterno>10084</CodigoInterno>
+      <Versao>54</Versao>
+      <Handle>278</Handle>
+      <AgendarEmissoes>false</AgendarEmissoes>
+      <GerarCabecalho>true</GerarCabecalho>
+      <GerarRodape>true</GerarRodape>
+      <Sistema>false</Sistema>
+      <ObrigarFiltro>false</ObrigarFiltro>
+      <ConsultaCustomizada xsi:nil="true" />
+    </Consulta>
+    <Campos>
+      <ConsultaCampoSerializavel>
+        <Tipo>
+          <Index>1</Index>
+          <Description>Comum</Description>
+        </Tipo>
+        <Formatacao>
+          <Index>1</Index>
+          <Description>Texto</Description>
+        </Formatacao>
+        <Nome>Pasta_Handle</Nome>
+        <TabelaOrigem />
+        <CampoOrigem />
+        <CampoConsulta>PASTA_HANDLE</CampoConsulta>
+        <FormatoData>dd/MM/yyyy</FormatoData>
+        <MascaraDecimal>#,0.00</MascaraDecimal>
+        <MascaraInteiro>#</MascaraInteiro>
+        <Simbolo>R$</Simbolo>
+        <Invisivel>false</Invisivel>
+        <Obrigatorio>false</Obrigatorio>
+        <CodigoInterno>1</CodigoInterno>
+      </ConsultaCampoSerializavel>
+      <ConsultaCampoSerializavel>
+        <Tipo>
+          <Index>1</Index>
+          <Description>Comum</Description>
+        </Tipo>
+        <Formatacao>
+          <Index>1</Index>
+          <Description>Texto</Description>
+        </Formatacao>
+        <Nome>Pasta</Nome>
+        <TabelaOrigem />
+        <CampoOrigem />
+        <CampoConsulta>PASTA</CampoConsulta>
+        <FormatoData>dd/MM/yyyy</FormatoData>
+        <MascaraDecimal>#,0.00</MascaraDecimal>
+        <MascaraInteiro>#</MascaraInteiro>
+        <Simbolo>R$</Simbolo>
+        <Invisivel>false</Invisivel>
+        <Obrigatorio>false</Obrigatorio>
+        <CodigoInterno>2</CodigoInterno>
+      </ConsultaCampoSerializavel>
+      <ConsultaCampoSerializavel>
+        <Tipo>
+          <Index>1</Index>
+          <Description>Comum</Description>
+        </Tipo>
+        <Formatacao>
+          <Index>1</Index>
+          <Description>Texto</Description>
+        </Formatacao>
+        <Nome>Pr_Handle</Nome>
+        <TabelaOrigem />
+        <CampoOrigem />
+        <CampoConsulta>PR_HANDLE</CampoConsulta>
+        <FormatoData>dd/MM/yyyy</FormatoData>
+        <MascaraDecimal>#,0.00</MascaraDecimal>
+        <MascaraInteiro>#</MascaraInteiro>
+        <Simbolo>R$</Simbolo>
+        <Invisivel>false</Invisivel>
+        <Obrigatorio>false</Obrigatorio>
+        <CodigoInterno>3</CodigoInterno>
+      </ConsultaCampoSerializavel>
+      <ConsultaCampoSerializavel>
+        <Tipo>
+          <Index>1</Index>
+          <Description>Comum</Description>
+        </Tipo>
+        <Formatacao>
+          <Index>1</Index>
+          <Description>Texto</Description>
+        </Formatacao>
+        <Nome>Processo</Nome>
+        <TabelaOrigem />
+        <CampoOrigem />
+        <CampoConsulta>PROCESSO</CampoConsulta>
+        <FormatoData>dd/MM/yyyy</FormatoData>
+        <MascaraDecimal>#,0.00</MascaraDecimal>
+        <MascaraInteiro>#</MascaraInteiro>
+        <Simbolo>R$</Simbolo>
+        <Invisivel>false</Invisivel>
+        <Obrigatorio>false</Obrigatorio>
+        <CodigoInterno>4</CodigoInterno>
+      </ConsultaCampoSerializavel>
+      <ConsultaCampoSerializavel>
+        <Tipo>
+          <Index>1</Index>
+          <Description>Comum</Description>
+        </Tipo>
+        <Formatacao>
+          <Index>1</Index>
+          <Description>Texto</Description>
+        </Formatacao>
+        <Nome>Tipo_Ação</Nome>
+        <TabelaOrigem />
+        <CampoOrigem />
+        <CampoConsulta>TIPO_AÇÃO</CampoConsulta>
+        <FormatoData>dd/MM/yyyy</FormatoData>
+        <MascaraDecimal>#,0.00</MascaraDecimal>
+        <MascaraInteiro>#</MascaraInteiro>
+        <Simbolo>R$</Simbolo>
+        <Invisivel>false</Invisivel>
+        <Obrigatorio>false</Obrigatorio>
+        <CodigoInterno>5</CodigoInterno>
+      </ConsultaCampoSerializavel>
+      <ConsultaCampoSerializavel>
+        <Tipo>
+          <Index>1</Index>
+          <Description>Comum</Description>
+        </Tipo>
+        <Formatacao>
+          <Index>1</Index>
+          <Description>Texto</Description>
+        </Formatacao>
+        <Nome>Providencia</Nome>
+        <TabelaOrigem />
+        <CampoOrigem />
+        <CampoConsulta>PROVIDENCIA</CampoConsulta>
+        <FormatoData>dd/MM/yyyy</FormatoData>
+        <MascaraDecimal>#,0.00</MascaraDecimal>
+        <MascaraInteiro>#</MascaraInteiro>
+        <Simbolo>R$</Simbolo>
+        <Invisivel>false</Invisivel>
+        <Obrigatorio>false</Obrigatorio>
+        <CodigoInterno>6</CodigoInterno>
+      </ConsultaCampoSerializavel>
+      <ConsultaCampoSerializavel>
+        <Tipo>
+          <Index>1</Index>
+          <Description>Comum</Description>
+        </Tipo>
+        <Formatacao>
+          <Index>5</Index>
+          <Description>Data</Description>
+        </Formatacao>
+        <Nome>Data_Inclusao</Nome>
+        <TabelaOrigem />
+        <CampoOrigem />
+        <CampoConsulta>DATA_INCLUSAO</CampoConsulta>
+        <FormatoData>dd/MM/yyyy</FormatoData>
+        <MascaraDecimal>#,0.00</MascaraDecimal>
+        <MascaraInteiro>#</MascaraInteiro>
+        <Simbolo>R$</Simbolo>
+        <Invisivel>false</Invisivel>
+        <Obrigatorio>false</Obrigatorio>
+        <CodigoInterno>7</CodigoInterno>
+      </ConsultaCampoSerializavel>
+      <ConsultaCampoSerializavel>
+        <Tipo>
+          <Index>1</Index>
+          <Description>Comum</Description>
+        </Tipo>
+        <Formatacao>
+          <Index>5</Index>
+          <Description>Data</Description>
+        </Formatacao>
+        <Nome>Data_Hr_Inclusao</Nome>
+        <TabelaOrigem />
+        <CampoOrigem />
+        <CampoConsulta>DATA_HR_INCLUSAO</CampoConsulta>
+        <FormatoData>dd/MM/yyyy</FormatoData>
+        <MascaraDecimal>#,0.00</MascaraDecimal>
+        <MascaraInteiro>#</MascaraInteiro>
+        <Simbolo>R$</Simbolo>
+        <Invisivel>false</Invisivel>
+        <Obrigatorio>false</Obrigatorio>
+        <CodigoInterno>8</CodigoInterno>
+      </ConsultaCampoSerializavel>
+      <ConsultaCampoSerializavel>
+        <Tipo>
+          <Index>1</Index>
+          <Description>Comum</Description>
+        </Tipo>
+        <Formatacao>
+          <Index>5</Index>
+          <Description>Data</Description>
+        </Formatacao>
+        <Nome>Data_Conclusao</Nome>
+        <TabelaOrigem />
+        <CampoOrigem />
+        <CampoConsulta>DATA_CONCLUSAO</CampoConsulta>
+        <FormatoData>dd/MM/yyyy</FormatoData>
+        <MascaraDecimal>#,0.00</MascaraDecimal>
+        <MascaraInteiro>#</MascaraInteiro>
+        <Simbolo>R$</Simbolo>
+        <Invisivel>false</Invisivel>
+        <Obrigatorio>false</Obrigatorio>
+        <CodigoInterno>9</CodigoInterno>
+      </ConsultaCampoSerializavel>
+      <ConsultaCampoSerializavel>
+        <Tipo>
+          <Index>1</Index>
+          <Description>Comum</Description>
+        </Tipo>
+        <Formatacao>
+          <Index>5</Index>
+          <Description>Data</Description>
+        </Formatacao>
+        <Nome>Data_Informada_Cumprimento</Nome>
+        <TabelaOrigem />
+        <CampoOrigem />
+        <CampoConsulta>DATA_INFORMADA_CUMPRIMENTO</CampoConsulta>
+        <FormatoData>dd/MM/yyyy</FormatoData>
+        <MascaraDecimal>#,0.00</MascaraDecimal>
+        <MascaraInteiro>#</MascaraInteiro>
+        <Simbolo>R$</Simbolo>
+        <Invisivel>false</Invisivel>
+        <Obrigatorio>false</Obrigatorio>
+        <CodigoInterno>10</CodigoInterno>
+      </ConsultaCampoSerializavel>
+      <ConsultaCampoSerializavel>
+        <Tipo>
+          <Index>1</Index>
+          <Description>Comum</Description>
+        </Tipo>
+        <Formatacao>
+          <Index>5</Index>
+          <Description>Data</Description>
+        </Formatacao>
+        <Nome>Dataevento</Nome>
+        <TabelaOrigem />
+        <CampoOrigem />
+        <CampoConsulta>DATAEVENTO</CampoConsulta>
+        <FormatoData>dd/MM/yyyy</FormatoData>
+        <MascaraDecimal>#,0.00</MascaraDecimal>
+        <MascaraInteiro>#</MascaraInteiro>
+        <Simbolo>R$</Simbolo>
+        <Invisivel>false</Invisivel>
+        <Obrigatorio>false</Obrigatorio>
+        <CodigoInterno>11</CodigoInterno>
+      </ConsultaCampoSerializavel>
+      <ConsultaCampoSerializavel>
+        <Tipo>
+          <Index>1</Index>
+          <Description>Comum</Description>
+        </Tipo>
+        <Formatacao>
+          <Index>1</Index>
+          <Description>Texto</Description>
+        </Formatacao>
+        <Nome>Tipo_Responsavel</Nome>
+        <TabelaOrigem />
+        <CampoOrigem />
+        <CampoConsulta>TIPO_RESPONSAVEL</CampoConsulta>
+        <FormatoData>dd/MM/yyyy</FormatoData>
+        <MascaraDecimal>#,0.00</MascaraDecimal>
+        <MascaraInteiro>#</MascaraInteiro>
+        <Simbolo>R$</Simbolo>
+        <Invisivel>false</Invisivel>
+        <Obrigatorio>false</Obrigatorio>
+        <CodigoInterno>12</CodigoInterno>
+      </ConsultaCampoSerializavel>
+      <ConsultaCampoSerializavel>
+        <Tipo>
+          <Index>1</Index>
+          <Description>Comum</Description>
+        </Tipo>
+        <Formatacao>
+          <Index>1</Index>
+          <Description>Texto</Description>
+        </Formatacao>
+        <Nome>Responsavel_Usuario</Nome>
+        <TabelaOrigem />
+        <CampoOrigem />
+        <CampoConsulta>RESPONSAVEL_USUARIO</CampoConsulta>
+        <FormatoData>dd/MM/yyyy</FormatoData>
+        <MascaraDecimal>#,0.00</MascaraDecimal>
+        <MascaraInteiro>#</MascaraInteiro>
+        <Simbolo>R$</Simbolo>
+        <Invisivel>false</Invisivel>
+        <Obrigatorio>false</Obrigatorio>
+        <CodigoInterno>13</CodigoInterno>
+      </ConsultaCampoSerializavel>
+      <ConsultaCampoSerializavel>
+        <Tipo>
+          <Index>1</Index>
+          <Description>Comum</Description>
+        </Tipo>
+        <Formatacao>
+          <Index>1</Index>
+          <Description>Texto</Description>
+        </Formatacao>
+        <Nome>Responsavel_Pessoa</Nome>
+        <TabelaOrigem />
+        <CampoOrigem />
+        <CampoConsulta>RESPONSAVEL_PESSOA</CampoConsulta>
+        <FormatoData>dd/MM/yyyy</FormatoData>
+        <MascaraDecimal>#,0.00</MascaraDecimal>
+        <MascaraInteiro>#</MascaraInteiro>
+        <Simbolo>R$</Simbolo>
+        <Invisivel>false</Invisivel>
+        <Obrigatorio>false</Obrigatorio>
+        <CodigoInterno>14</CodigoInterno>
+      </ConsultaCampoSerializavel>
+      <ConsultaCampoSerializavel>
+        <Tipo>
+          <Index>1</Index>
+          <Description>Comum</Description>
+        </Tipo>
+        <Formatacao>
+          <Index>1</Index>
+          <Description>Texto</Description>
+        </Formatacao>
+        <Nome>Responsavel_Papel</Nome>
+        <TabelaOrigem />
+        <CampoOrigem />
+        <CampoConsulta>RESPONSAVEL_PAPEL</CampoConsulta>
+        <FormatoData>dd/MM/yyyy</FormatoData>
+        <MascaraDecimal>#,0.00</MascaraDecimal>
+        <MascaraInteiro>#</MascaraInteiro>
+        <Simbolo>R$</Simbolo>
+        <Invisivel>false</Invisivel>
+        <Obrigatorio>false</Obrigatorio>
+        <CodigoInterno>15</CodigoInterno>
+      </ConsultaCampoSerializavel>
+      <ConsultaCampoSerializavel>
+        <Tipo>
+          <Index>1</Index>
+          <Description>Comum</Description>
+        </Tipo>
+        <Formatacao>
+          <Index>1</Index>
+          <Description>Texto</Description>
+        </Formatacao>
+        <Nome>Escritório</Nome>
+        <TabelaOrigem />
+        <CampoOrigem />
+        <CampoConsulta>ESCRITÓRIO</CampoConsulta>
+        <FormatoData>dd/MM/yyyy</FormatoData>
+        <MascaraDecimal>#,0.00</MascaraDecimal>
+        <MascaraInteiro>#</MascaraInteiro>
+        <Simbolo>R$</Simbolo>
+        <Invisivel>false</Invisivel>
+        <Obrigatorio>false</Obrigatorio>
+        <CodigoInterno>16</CodigoInterno>
+      </ConsultaCampoSerializavel>
+      <ConsultaCampoSerializavel>
+        <Tipo>
+          <Index>1</Index>
+          <Description>Comum</Description>
+        </Tipo>
+        <Formatacao>
+          <Index>1</Index>
+          <Description>Texto</Description>
+        </Formatacao>
+        <Nome>Número_Contrato</Nome>
+        <TabelaOrigem />
+        <CampoOrigem />
+        <CampoConsulta>NÚMERO_CONTRATO</CampoConsulta>
+        <FormatoData>dd/MM/yyyy</FormatoData>
+        <MascaraDecimal>#,0.00</MascaraDecimal>
+        <MascaraInteiro>#</MascaraInteiro>
+        <Simbolo>R$</Simbolo>
+        <Invisivel>false</Invisivel>
+        <Obrigatorio>false</Obrigatorio>
+        <CodigoInterno>17</CodigoInterno>
+      </ConsultaCampoSerializavel>
+      <ConsultaCampoSerializavel>
+        <Tipo>
+          <Index>1</Index>
+          <Description>Comum</Description>
+        </Tipo>
+        <Formatacao>
+          <Index>1</Index>
+          <Description>Texto</Description>
+        </Formatacao>
+        <Nome>Lista_Documentos</Nome>
+        <TabelaOrigem />
+        <CampoOrigem />
+        <CampoConsulta>LISTA_DOCUMENTOS</CampoConsulta>
+        <FormatoData>dd/MM/yyyy</FormatoData>
+        <MascaraDecimal>#,0.00</MascaraDecimal>
+        <MascaraInteiro>#</MascaraInteiro>
+        <Simbolo>R$</Simbolo>
+        <Invisivel>false</Invisivel>
+        <Obrigatorio>false</Obrigatorio>
+        <CodigoInterno>18</CodigoInterno>
+      </ConsultaCampoSerializavel>
+      <ConsultaCampoSerializavel>
+        <Tipo>
+          <Index>1</Index>
+          <Description>Comum</Description>
+        </Tipo>
+        <Formatacao>
+          <Index>1</Index>
+          <Description>Texto</Description>
+        </Formatacao>
+        <Nome>Status_Providencia</Nome>
+        <TabelaOrigem />
+        <CampoOrigem />
+        <CampoConsulta>STATUS_PROVIDENCIA</CampoConsulta>
+        <FormatoData>dd/MM/yyyy</FormatoData>
+        <MascaraDecimal>#,0.00</MascaraDecimal>
+        <MascaraInteiro>#</MascaraInteiro>
+        <Simbolo>R$</Simbolo>
+        <Invisivel>false</Invisivel>
+        <Obrigatorio>false</Obrigatorio>
+        <CodigoInterno>22</CodigoInterno>
+      </ConsultaCampoSerializavel>
+      <ConsultaCampoSerializavel>
+        <Tipo>
+          <Index>1</Index>
+          <Description>Comum</Description>
+        </Tipo>
+        <Formatacao>
+          <Index>1</Index>
+          <Description>Texto</Description>
+        </Formatacao>
+        <Nome>Cumprido_Usuario</Nome>
+        <TabelaOrigem />
+        <CampoOrigem />
+        <CampoConsulta>CUMPRIDO_USUARIO</CampoConsulta>
+        <FormatoData>dd/MM/yyyy</FormatoData>
+        <MascaraDecimal>#,0.00</MascaraDecimal>
+        <MascaraInteiro>#</MascaraInteiro>
+        <Simbolo>R$</Simbolo>
+        <Invisivel>false</Invisivel>
+        <Obrigatorio>false</Obrigatorio>
+        <CodigoInterno>23</CodigoInterno>
+      </ConsultaCampoSerializavel>
+      <ConsultaCampoSerializavel>
+        <Tipo>
+          <Index>1</Index>
+          <Description>Comum</Description>
+        </Tipo>
+        <Formatacao>
+          <Index>1</Index>
+          <Description>Texto</Description>
+        </Formatacao>
+        <Nome>Cumprido_Por</Nome>
+        <TabelaOrigem />
+        <CampoOrigem />
+        <CampoConsulta>CUMPRIDO_POR</CampoConsulta>
+        <FormatoData>dd/MM/yyyy</FormatoData>
+        <MascaraDecimal>#,0.00</MascaraDecimal>
+        <MascaraInteiro>#</MascaraInteiro>
+        <Simbolo>R$</Simbolo>
+        <Invisivel>false</Invisivel>
+        <Obrigatorio>false</Obrigatorio>
+        <CodigoInterno>24</CodigoInterno>
+      </ConsultaCampoSerializavel>
+      <ConsultaCampoSerializavel>
+        <Tipo>
+          <Index>1</Index>
+          <Description>Comum</Description>
+        </Tipo>
+        <Formatacao>
+          <Index>1</Index>
+          <Description>Texto</Description>
+        </Formatacao>
+        <Nome>Categoria</Nome>
+        <TabelaOrigem />
+        <CampoOrigem />
+        <CampoConsulta>CATEGORIA</CampoConsulta>
+        <FormatoData>dd/MM/yyyy</FormatoData>
+        <MascaraDecimal>#,0.00</MascaraDecimal>
+        <MascaraInteiro>#</MascaraInteiro>
+        <Simbolo>R$</Simbolo>
+        <Invisivel>false</Invisivel>
+        <Obrigatorio>false</Obrigatorio>
+        <CodigoInterno>19</CodigoInterno>
+      </ConsultaCampoSerializavel>
+      <ConsultaCampoSerializavel>
+        <Tipo>
+          <Index>1</Index>
+          <Description>Comum</Description>
+        </Tipo>
+        <Formatacao>
+          <Index>1</Index>
+          <Description>Texto</Description>
+        </Formatacao>
+        <Nome>Gerencia_Responsavel</Nome>
+        <TabelaOrigem />
+        <CampoOrigem />
+        <CampoConsulta>GERENCIA_RESPONSAVEL</CampoConsulta>
+        <FormatoData>dd/MM/yyyy</FormatoData>
+        <MascaraDecimal>#,0.00</MascaraDecimal>
+        <MascaraInteiro>#</MascaraInteiro>
+        <Simbolo>R$</Simbolo>
+        <Invisivel>false</Invisivel>
+        <Obrigatorio>false</Obrigatorio>
+        <CodigoInterno>20</CodigoInterno>
+      </ConsultaCampoSerializavel>
+      <ConsultaCampoSerializavel>
+        <Tipo>
+          <Index>1</Index>
+          <Description>Comum</Description>
+        </Tipo>
+        <Formatacao>
+          <Index>1</Index>
+          <Description>Texto</Description>
+        </Formatacao>
+        <Nome>Advogado_Interno</Nome>
+        <TabelaOrigem />
+        <CampoOrigem />
+        <CampoConsulta>ADVOGADO_INTERNO</CampoConsulta>
+        <FormatoData>dd/MM/yyyy</FormatoData>
+        <MascaraDecimal>#,0.00</MascaraDecimal>
+        <MascaraInteiro>#</MascaraInteiro>
+        <Simbolo>R$</Simbolo>
+        <Invisivel>false</Invisivel>
+        <Obrigatorio>false</Obrigatorio>
+        <CodigoInterno>21</CodigoInterno>
+      </ConsultaCampoSerializavel>
+    </Campos>
+    <ModelosConsulta>
+      <ModeloSerializavel>
+        <tipoModelo>
+          <Index>1</Index>
+          <Description>Consulta</Description>
+        </tipoModelo>
+        <exibeGrid>
+          <Index>1</Index>
+          <Description>Não</Description>
+        </exibeGrid>
+        <cliqueGrid>
+          <Index>1</Index>
+          <Description>Não</Description>
+        </cliqueGrid>
+        <arquivoTemporario>
+          <Index>2</Index>
+          <Description>Permanente</Description>
+        </arquivoTemporario>
+        <formatoArquivo>
+          <Index>X</Index>
+          <Description>Excel (XLS)</Description>
+        </formatoArquivo>
+        <disponibilidadeModelo>
+          <Index>U</Index>
+          <Description>Somente para mim</Description>
+        </disponibilidadeModelo>
+        <abreComo>
+          <Index>1</Index>
+          <Description>Abaixo</Description>
+        </abreComo>
+        <paginaInicial>
+          <Index>2</Index>
+          <Description>Não</Description>
+        </paginaInicial>
+        <apresentarSequencial>false</apresentarSequencial>
+        <somenteLeitura>false</somenteLeitura>
+        <compactarArquivo>false</compactarArquivo>
+        <exibeGrafico>false</exibeGrafico>
+        <modeloPrincipal>false</modeloPrincipal>
+        <utilizaSerieDupla>false</utilizaSerieDupla>
+        <obsoleto>false</obsoleto>
+        <modeloPadrao>false</modeloPadrao>
+        <codigoInternoConsulta>10084</codigoInternoConsulta>
+        <usuario>3144</usuario>
+        <identificadorGrafico>80246</identificadorGrafico>
+        <identificadorModeloAuxiliar>0</identificadorModeloAuxiliar>
+        <contadorCampos>24</contadorCampos>
+        <nome>PETRO - GEJ - Relatório 3 - Providências - CE e</nome>
+        <percentualAgrupamento>0</percentualAgrupamento>
+      </ModeloSerializavel>
+    </ModelosConsulta>
+    <CamposModeloConsulta>
+      <ModeloCamposSerializavel>
+        <_campoDeModeloPadrao>false</_campoDeModeloPadrao>
+        <ordem>2</ordem>
+        <codigoInternoConsulta>1</codigoInternoConsulta>
+        <identificadorRelatorio>80246</identificadorRelatorio>
+        <identificadorCampos>1</identificadorCampos>
+        <selecionar>true</selecionar>
+        <grid>false</grid>
+        <rotulo>false</rotulo>
+        <filtro>false</filtro>
+        <legenda>false</legenda>
+        <legendaFiltro>false</legendaFiltro>
+        <valorAuxiliar>false</valorAuxiliar>
+        <legendaAuxiliar>false</legendaAuxiliar>
+        <filtroLinkGrid>false</filtroLinkGrid>
+        <filtroAgrupando>false</filtroAgrupando>
+        <CampoDeModeloPadrao>false</CampoDeModeloPadrao>
+      </ModeloCamposSerializavel>
+      <ModeloCamposSerializavel>
+        <_campoDeModeloPadrao>false</_campoDeModeloPadrao>
+        <ordem>4</ordem>
+        <codigoInternoConsulta>2</codigoInternoConsulta>
+        <identificadorRelatorio>80246</identificadorRelatorio>
+        <identificadorCampos>2</identificadorCampos>
+        <selecionar>true</selecionar>
+        <grid>false</grid>
+        <rotulo>false</rotulo>
+        <filtro>false</filtro>
+        <legenda>false</legenda>
+        <legendaFiltro>false</legendaFiltro>
+        <valorAuxiliar>false</valorAuxiliar>
+        <legendaAuxiliar>false</legendaAuxiliar>
+        <filtroLinkGrid>false</filtroLinkGrid>
+        <filtroAgrupando>false</filtroAgrupando>
+        <CampoDeModeloPadrao>false</CampoDeModeloPadrao>
+      </ModeloCamposSerializavel>
+      <ModeloCamposSerializavel>
+        <_campoDeModeloPadrao>false</_campoDeModeloPadrao>
+        <ordem>6</ordem>
+        <codigoInternoConsulta>3</codigoInternoConsulta>
+        <identificadorRelatorio>80246</identificadorRelatorio>
+        <identificadorCampos>3</identificadorCampos>
+        <selecionar>true</selecionar>
+        <grid>false</grid>
+        <rotulo>false</rotulo>
+        <filtro>false</filtro>
+        <legenda>false</legenda>
+        <legendaFiltro>false</legendaFiltro>
+        <valorAuxiliar>false</valorAuxiliar>
+        <legendaAuxiliar>false</legendaAuxiliar>
+        <filtroLinkGrid>false</filtroLinkGrid>
+        <filtroAgrupando>false</filtroAgrupando>
+        <CampoDeModeloPadrao>false</CampoDeModeloPadrao>
+      </ModeloCamposSerializavel>
+      <ModeloCamposSerializavel>
+        <_campoDeModeloPadrao>false</_campoDeModeloPadrao>
+        <ordem>8</ordem>
+        <codigoInternoConsulta>4</codigoInternoConsulta>
+        <identificadorRelatorio>80246</identificadorRelatorio>
+        <identificadorCampos>4</identificadorCampos>
+        <selecionar>true</selecionar>
+        <grid>false</grid>
+        <rotulo>false</rotulo>
+        <filtro>false</filtro>
+        <legenda>false</legenda>
+        <legendaFiltro>false</legendaFiltro>
+        <valorAuxiliar>false</valorAuxiliar>
+        <legendaAuxiliar>false</legendaAuxiliar>
+        <filtroLinkGrid>false</filtroLinkGrid>
+        <filtroAgrupando>false</filtroAgrupando>
+        <CampoDeModeloPadrao>false</CampoDeModeloPadrao>
+      </ModeloCamposSerializavel>
+      <ModeloCamposSerializavel>
+        <_campoDeModeloPadrao>false</_campoDeModeloPadrao>
+        <ordem>10</ordem>
+        <codigoInternoConsulta>5</codigoInternoConsulta>
+        <identificadorRelatorio>80246</identificadorRelatorio>
+        <identificadorCampos>5</identificadorCampos>
+        <selecionar>true</selecionar>
+        <grid>false</grid>
+        <rotulo>false</rotulo>
+        <filtro>false</filtro>
+        <legenda>false</legenda>
+        <legendaFiltro>false</legendaFiltro>
+        <valorAuxiliar>false</valorAuxiliar>
+        <legendaAuxiliar>false</legendaAuxiliar>
+        <filtroLinkGrid>false</filtroLinkGrid>
+        <filtroAgrupando>false</filtroAgrupando>
+        <CampoDeModeloPadrao>false</CampoDeModeloPadrao>
+      </ModeloCamposSerializavel>
+      <ModeloCamposSerializavel>
+        <_campoDeModeloPadrao>false</_campoDeModeloPadrao>
+        <ordem>12</ordem>
+        <codigoInternoConsulta>6</codigoInternoConsulta>
+        <identificadorRelatorio>80246</identificadorRelatorio>
+        <identificadorCampos>6</identificadorCampos>
+        <selecionar>true</selecionar>
+        <grid>false</grid>
+        <rotulo>false</rotulo>
+        <filtro>false</filtro>
+        <legenda>false</legenda>
+        <legendaFiltro>false</legendaFiltro>
+        <valorAuxiliar>false</valorAuxiliar>
+        <legendaAuxiliar>false</legendaAuxiliar>
+        <filtroLinkGrid>false</filtroLinkGrid>
+        <filtroAgrupando>false</filtroAgrupando>
+        <CampoDeModeloPadrao>false</CampoDeModeloPadrao>
+      </ModeloCamposSerializavel>
+      <ModeloCamposSerializavel>
+        <_campoDeModeloPadrao>false</_campoDeModeloPadrao>
+        <ordem>14</ordem>
+        <codigoInternoConsulta>7</codigoInternoConsulta>
+        <identificadorRelatorio>80246</identificadorRelatorio>
+        <identificadorCampos>7</identificadorCampos>
+        <selecionar>true</selecionar>
+        <grid>false</grid>
+        <rotulo>false</rotulo>
+        <filtro>false</filtro>
+        <legenda>false</legenda>
+        <legendaFiltro>false</legendaFiltro>
+        <valorAuxiliar>false</valorAuxiliar>
+        <legendaAuxiliar>false</legendaAuxiliar>
+        <filtroLinkGrid>false</filtroLinkGrid>
+        <filtroAgrupando>false</filtroAgrupando>
+        <CampoDeModeloPadrao>false</CampoDeModeloPadrao>
+      </ModeloCamposSerializavel>
+      <ModeloCamposSerializavel>
+        <_campoDeModeloPadrao>false</_campoDeModeloPadrao>
+        <ordem>16</ordem>
+        <codigoInternoConsulta>8</codigoInternoConsulta>
+        <identificadorRelatorio>80246</identificadorRelatorio>
+        <identificadorCampos>8</identificadorCampos>
+        <selecionar>true</selecionar>
+        <grid>false</grid>
+        <rotulo>false</rotulo>
+        <filtro>false</filtro>
+        <legenda>false</legenda>
+        <legendaFiltro>false</legendaFiltro>
+        <valorAuxiliar>false</valorAuxiliar>
+        <legendaAuxiliar>false</legendaAuxiliar>
+        <filtroLinkGrid>false</filtroLinkGrid>
+        <filtroAgrupando>false</filtroAgrupando>
+        <CampoDeModeloPadrao>false</CampoDeModeloPadrao>
+      </ModeloCamposSerializavel>
+      <ModeloCamposSerializavel>
+        <_campoDeModeloPadrao>false</_campoDeModeloPadrao>
+        <ordem>18</ordem>
+        <codigoInternoConsulta>9</codigoInternoConsulta>
+        <identificadorRelatorio>80246</identificadorRelatorio>
+        <identificadorCampos>9</identificadorCampos>
+        <selecionar>true</selecionar>
+        <grid>false</grid>
+        <rotulo>false</rotulo>
+        <filtro>false</filtro>
+        <legenda>false</legenda>
+        <legendaFiltro>false</legendaFiltro>
+        <valorAuxiliar>false</valorAuxiliar>
+        <legendaAuxiliar>false</legendaAuxiliar>
+        <filtroLinkGrid>false</filtroLinkGrid>
+        <filtroAgrupando>false</filtroAgrupando>
+        <CampoDeModeloPadrao>false</CampoDeModeloPadrao>
+      </ModeloCamposSerializavel>
+      <ModeloCamposSerializavel>
+        <_campoDeModeloPadrao>false</_campoDeModeloPadrao>
+        <ordem>20</ordem>
+        <codigoInternoConsulta>10</codigoInternoConsulta>
+        <identificadorRelatorio>80246</identificadorRelatorio>
+        <identificadorCampos>10</identificadorCampos>
+        <selecionar>true</selecionar>
+        <grid>false</grid>
+        <rotulo>false</rotulo>
+        <filtro>false</filtro>
+        <legenda>false</legenda>
+        <legendaFiltro>false</legendaFiltro>
+        <valorAuxiliar>false</valorAuxiliar>
+        <legendaAuxiliar>false</legendaAuxiliar>
+        <filtroLinkGrid>false</filtroLinkGrid>
+        <filtroAgrupando>false</filtroAgrupando>
+        <CampoDeModeloPadrao>false</CampoDeModeloPadrao>
+      </ModeloCamposSerializavel>
+      <ModeloCamposSerializavel>
+        <_campoDeModeloPadrao>false</_campoDeModeloPadrao>
+        <ordem>22</ordem>
+        <codigoInternoConsulta>11</codigoInternoConsulta>
+        <identificadorRelatorio>80246</identificadorRelatorio>
+        <identificadorCampos>11</identificadorCampos>
+        <selecionar>true</selecionar>
+        <grid>false</grid>
+        <rotulo>false</rotulo>
+        <filtro>false</filtro>
+        <legenda>false</legenda>
+        <legendaFiltro>false</legendaFiltro>
+        <valorAuxiliar>false</valorAuxiliar>
+        <legendaAuxiliar>false</legendaAuxiliar>
+        <filtroLinkGrid>false</filtroLinkGrid>
+        <filtroAgrupando>false</filtroAgrupando>
+        <CampoDeModeloPadrao>false</CampoDeModeloPadrao>
+      </ModeloCamposSerializavel>
+      <ModeloCamposSerializavel>
+        <_campoDeModeloPadrao>false</_campoDeModeloPadrao>
+        <ordem>24</ordem>
+        <codigoInternoConsulta>12</codigoInternoConsulta>
+        <identificadorRelatorio>80246</identificadorRelatorio>
+        <identificadorCampos>12</identificadorCampos>
+        <selecionar>true</selecionar>
+        <grid>false</grid>
+        <rotulo>false</rotulo>
+        <filtro>false</filtro>
+        <legenda>false</legenda>
+        <legendaFiltro>false</legendaFiltro>
+        <valorAuxiliar>false</valorAuxiliar>
+        <legendaAuxiliar>false</legendaAuxiliar>
+        <filtroLinkGrid>false</filtroLinkGrid>
+        <filtroAgrupando>false</filtroAgrupando>
+        <CampoDeModeloPadrao>false</CampoDeModeloPadrao>
+      </ModeloCamposSerializavel>
+      <ModeloCamposSerializavel>
+        <_campoDeModeloPadrao>false</_campoDeModeloPadrao>
+        <ordem>26</ordem>
+        <codigoInternoConsulta>13</codigoInternoConsulta>
+        <identificadorRelatorio>80246</identificadorRelatorio>
+        <identificadorCampos>13</identificadorCampos>
+        <selecionar>true</selecionar>
+        <grid>false</grid>
+        <rotulo>false</rotulo>
+        <filtro>false</filtro>
+        <legenda>false</legenda>
+        <legendaFiltro>false</legendaFiltro>
+        <valorAuxiliar>false</valorAuxiliar>
+        <legendaAuxiliar>false</legendaAuxiliar>
+        <filtroLinkGrid>false</filtroLinkGrid>
+        <filtroAgrupando>false</filtroAgrupando>
+        <CampoDeModeloPadrao>false</CampoDeModeloPadrao>
+      </ModeloCamposSerializavel>
+      <ModeloCamposSerializavel>
+        <_campoDeModeloPadrao>false</_campoDeModeloPadrao>
+        <ordem>28</ordem>
+        <codigoInternoConsulta>14</codigoInternoConsulta>
+        <identificadorRelatorio>80246</identificadorRelatorio>
+        <identificadorCampos>14</identificadorCampos>
+        <selecionar>true</selecionar>
+        <grid>false</grid>
+        <rotulo>false</rotulo>
+        <filtro>false</filtro>
+        <legenda>false</legenda>
+        <legendaFiltro>false</legendaFiltro>
+        <valorAuxiliar>false</valorAuxiliar>
+        <legendaAuxiliar>false</legendaAuxiliar>
+        <filtroLinkGrid>false</filtroLinkGrid>
+        <filtroAgrupando>false</filtroAgrupando>
+        <CampoDeModeloPadrao>false</CampoDeModeloPadrao>
+      </ModeloCamposSerializavel>
+      <ModeloCamposSerializavel>
+        <_campoDeModeloPadrao>false</_campoDeModeloPadrao>
+        <ordem>30</ordem>
+        <codigoInternoConsulta>15</codigoInternoConsulta>
+        <identificadorRelatorio>80246</identificadorRelatorio>
+        <identificadorCampos>15</identificadorCampos>
+        <selecionar>true</selecionar>
+        <grid>false</grid>
+        <rotulo>false</rotulo>
+        <filtro>false</filtro>
+        <legenda>false</legenda>
+        <legendaFiltro>false</legendaFiltro>
+        <valorAuxiliar>false</valorAuxiliar>
+        <legendaAuxiliar>false</legendaAuxiliar>
+        <filtroLinkGrid>false</filtroLinkGrid>
+        <filtroAgrupando>false</filtroAgrupando>
+        <CampoDeModeloPadrao>false</CampoDeModeloPadrao>
+      </ModeloCamposSerializavel>
+      <ModeloCamposSerializavel>
+        <_campoDeModeloPadrao>false</_campoDeModeloPadrao>
+        <ordem>32</ordem>
+        <codigoInternoConsulta>16</codigoInternoConsulta>
+        <identificadorRelatorio>80246</identificadorRelatorio>
+        <identificadorCampos>16</identificadorCampos>
+        <selecionar>true</selecionar>
+        <grid>false</grid>
+        <rotulo>false</rotulo>
+        <filtro>false</filtro>
+        <legenda>false</legenda>
+        <legendaFiltro>false</legendaFiltro>
+        <valorAuxiliar>false</valorAuxiliar>
+        <legendaAuxiliar>false</legendaAuxiliar>
+        <filtroLinkGrid>false</filtroLinkGrid>
+        <filtroAgrupando>false</filtroAgrupando>
+        <CampoDeModeloPadrao>false</CampoDeModeloPadrao>
+      </ModeloCamposSerializavel>
+      <ModeloCamposSerializavel>
+        <_campoDeModeloPadrao>false</_campoDeModeloPadrao>
+        <ordem>34</ordem>
+        <codigoInternoConsulta>17</codigoInternoConsulta>
+        <identificadorRelatorio>80246</identificadorRelatorio>
+        <identificadorCampos>17</identificadorCampos>
+        <selecionar>true</selecionar>
+        <grid>false</grid>
+        <rotulo>false</rotulo>
+        <filtro>false</filtro>
+        <legenda>false</legenda>
+        <legendaFiltro>false</legendaFiltro>
+        <valorAuxiliar>false</valorAuxiliar>
+        <legendaAuxiliar>false</legendaAuxiliar>
+        <filtroLinkGrid>false</filtroLinkGrid>
+        <filtroAgrupando>false</filtroAgrupando>
+        <CampoDeModeloPadrao>false</CampoDeModeloPadrao>
+      </ModeloCamposSerializavel>
+      <ModeloCamposSerializavel>
+        <_campoDeModeloPadrao>false</_campoDeModeloPadrao>
+        <ordem>36</ordem>
+        <codigoInternoConsulta>18</codigoInternoConsulta>
+        <identificadorRelatorio>80246</identificadorRelatorio>
+        <identificadorCampos>18</identificadorCampos>
+        <selecionar>true</selecionar>
+        <grid>false</grid>
+        <rotulo>false</rotulo>
+        <filtro>false</filtro>
+        <legenda>false</legenda>
+        <legendaFiltro>false</legendaFiltro>
+        <valorAuxiliar>false</valorAuxiliar>
+        <legendaAuxiliar>false</legendaAuxiliar>
+        <filtroLinkGrid>false</filtroLinkGrid>
+        <filtroAgrupando>false</filtroAgrupando>
+        <CampoDeModeloPadrao>false</CampoDeModeloPadrao>
+      </ModeloCamposSerializavel>
+      <ModeloCamposSerializavel>
+        <_campoDeModeloPadrao>false</_campoDeModeloPadrao>
+        <ordem>38</ordem>
+        <codigoInternoConsulta>22</codigoInternoConsulta>
+        <identificadorRelatorio>80246</identificadorRelatorio>
+        <identificadorCampos>19</identificadorCampos>
+        <selecionar>true</selecionar>
+        <grid>false</grid>
+        <rotulo>false</rotulo>
+        <filtro>false</filtro>
+        <legenda>false</legenda>
+        <legendaFiltro>false</legendaFiltro>
+        <valorAuxiliar>false</valorAuxiliar>
+        <legendaAuxiliar>false</legendaAuxiliar>
+        <filtroLinkGrid>false</filtroLinkGrid>
+        <filtroAgrupando>false</filtroAgrupando>
+        <CampoDeModeloPadrao>false</CampoDeModeloPadrao>
+      </ModeloCamposSerializavel>
+      <ModeloCamposSerializavel>
+        <_campoDeModeloPadrao>false</_campoDeModeloPadrao>
+        <ordem>40</ordem>
+        <codigoInternoConsulta>23</codigoInternoConsulta>
+        <identificadorRelatorio>80246</identificadorRelatorio>
+        <identificadorCampos>20</identificadorCampos>
+        <selecionar>true</selecionar>
+        <grid>false</grid>
+        <rotulo>false</rotulo>
+        <filtro>false</filtro>
+        <legenda>false</legenda>
+        <legendaFiltro>false</legendaFiltro>
+        <valorAuxiliar>false</valorAuxiliar>
+        <legendaAuxiliar>false</legendaAuxiliar>
+        <filtroLinkGrid>false</filtroLinkGrid>
+        <filtroAgrupando>false</filtroAgrupando>
+        <CampoDeModeloPadrao>false</CampoDeModeloPadrao>
+      </ModeloCamposSerializavel>
+      <ModeloCamposSerializavel>
+        <_campoDeModeloPadrao>false</_campoDeModeloPadrao>
+        <ordem>42</ordem>
+        <codigoInternoConsulta>24</codigoInternoConsulta>
+        <identificadorRelatorio>80246</identificadorRelatorio>
+        <identificadorCampos>21</identificadorCampos>
+        <selecionar>true</selecionar>
+        <grid>false</grid>
+        <rotulo>false</rotulo>
+        <filtro>false</filtro>
+        <legenda>false</legenda>
+        <legendaFiltro>false</legendaFiltro>
+        <valorAuxiliar>false</valorAuxiliar>
+        <legendaAuxiliar>false</legendaAuxiliar>
+        <filtroLinkGrid>false</filtroLinkGrid>
+        <filtroAgrupando>false</filtroAgrupando>
+        <CampoDeModeloPadrao>false</CampoDeModeloPadrao>
+      </ModeloCamposSerializavel>
+      <ModeloCamposSerializavel>
+        <_campoDeModeloPadrao>false</_campoDeModeloPadrao>
+        <ordem>44</ordem>
+        <codigoInternoConsulta>19</codigoInternoConsulta>
+        <identificadorRelatorio>80246</identificadorRelatorio>
+        <identificadorCampos>22</identificadorCampos>
+        <selecionar>true</selecionar>
+        <grid>false</grid>
+        <rotulo>false</rotulo>
+        <filtro>false</filtro>
+        <legenda>false</legenda>
+        <legendaFiltro>false</legendaFiltro>
+        <valorAuxiliar>false</valorAuxiliar>
+        <legendaAuxiliar>false</legendaAuxiliar>
+        <filtroLinkGrid>false</filtroLinkGrid>
+        <filtroAgrupando>false</filtroAgrupando>
+        <CampoDeModeloPadrao>false</CampoDeModeloPadrao>
+      </ModeloCamposSerializavel>
+      <ModeloCamposSerializavel>
+        <_campoDeModeloPadrao>false</_campoDeModeloPadrao>
+        <ordem>46</ordem>
+        <codigoInternoConsulta>20</codigoInternoConsulta>
+        <identificadorRelatorio>80246</identificadorRelatorio>
+        <identificadorCampos>23</identificadorCampos>
+        <selecionar>true</selecionar>
+        <grid>false</grid>
+        <rotulo>false</rotulo>
+        <filtro>false</filtro>
+        <legenda>false</legenda>
+        <legendaFiltro>false</legendaFiltro>
+        <valorAuxiliar>false</valorAuxiliar>
+        <legendaAuxiliar>false</legendaAuxiliar>
+        <filtroLinkGrid>false</filtroLinkGrid>
+        <filtroAgrupando>false</filtroAgrupando>
+        <CampoDeModeloPadrao>false</CampoDeModeloPadrao>
+      </ModeloCamposSerializavel>
+      <ModeloCamposSerializavel>
+        <_campoDeModeloPadrao>false</_campoDeModeloPadrao>
+        <ordem>48</ordem>
+        <codigoInternoConsulta>21</codigoInternoConsulta>
+        <identificadorRelatorio>80246</identificadorRelatorio>
+        <identificadorCampos>24</identificadorCampos>
+        <selecionar>true</selecionar>
+        <grid>false</grid>
+        <rotulo>false</rotulo>
+        <filtro>false</filtro>
+        <legenda>false</legenda>
+        <legendaFiltro>false</legendaFiltro>
+        <valorAuxiliar>false</valorAuxiliar>
+        <legendaAuxiliar>false</legendaAuxiliar>
+        <filtroLinkGrid>false</filtroLinkGrid>
+        <filtroAgrupando>false</filtroAgrupando>
+        <CampoDeModeloPadrao>false</CampoDeModeloPadrao>
+      </ModeloCamposSerializavel>
+    </CamposModeloConsulta>
+  </ConsultaExportavel>
+</ArrayOfConsultaExportavel>
